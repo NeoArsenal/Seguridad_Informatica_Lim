@@ -1,0 +1,146 @@
+# ==============================================================================
+# PROYECTO FINAL SEGURIDAD INFORMATICA - CLINICA LIMATAMBO (UPN)
+# Infraestructura Completa Multi-Zona en Docker (Semanas 3, 4, 5, 7, 8, 9, 11 y 12)
+# Uso: docker compose up -d
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. FIREWALL PERIMETRAL (Zonas WAN, LAN 10.0.0.1/24, DMZ 172.16.10.1/24) - S9/S11/S12
+  #    Aplica filtrado stateful, registro de eventos PASS/BLOCK y aislamiento DMZ->LAN
+  # ----------------------------------------------------------------------------
+  fw-perimetral:
+    image: ubuntu:22.04
+    container_name: fw-perimetral
+    hostname: fw-limatambo-perimetral
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    command: >
+      bash -c "apt-get update && apt-get install -y iptables iproute2 iputils-ping tcpdump curl net-tools &&
+      iptables -F FORWARD &&
+      iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT &&
+      iptables -A FORWARD -s 10.0.0.0/24 -d 172.16.10.10 -p tcp --dport 80 -j LOG --log-prefix '[FW-PASS-LAN-A-DMZ] ' &&
+      iptables -A FORWARD -s 10.0.0.0/24 -d 172.16.10.10 -p tcp --dport 80 -j ACCEPT &&
+      iptables -A FORWARD -s 172.16.10.0/24 -d 10.0.0.0/24 -j LOG --log-prefix '[FW-BLOCK-DMZ-A-LAN] ' &&
+      iptables -A FORWARD -s 172.16.10.0/24 -d 10.0.0.0/24 -j DROP &&
+      tail -f /dev/null"
+    networks:
+      red_wan:
+        ipv4_address: 203.0.113.2
+      red_dmz:
+        ipv4_address: 172.16.10.254
+      red_lan:
+        ipv4_address: 10.0.0.254
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # 2. ZONA DMZ (172.16.10.0/24): Portal Web HCE e Imagenologia (Nginx) - S11/S12
+  # ----------------------------------------------------------------------------
+  portal-clinica-dmz:
+    image: nginx:stable-alpine
+    container_name: portal-clinica-dmz
+    hostname: web-dmz-limatambo
+    volumes:
+      - ./portal_html/index.html:/usr/share/nginx/html/index.html:ro
+    ports:
+      - "8080:80"   # Publicacion DNAT Port Forwarding desde Host/WAN -> 172.16.10.10:80
+    networks:
+      red_dmz:
+        ipv4_address: 172.16.10.10
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # 3. ZONA DMZ (172.16.10.0/24): Sensor Honeypot SSH/Telnet (Cowrie / T-Pot S12)
+  # ----------------------------------------------------------------------------
+  honeypot-dmz:
+    image: cowrie/cowrie:latest
+    container_name: honeypot-dmz
+    hostname: srv-backup-hce
+    ports:
+      - "2222:2222" # Puerto SSH Honeypot en DMZ para deteccion de intrusos y fuerza bruta
+    networks:
+      red_dmz:
+        ipv4_address: 172.16.10.20
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # 4. ZONA LAN CLINICA (10.0.0.0/24): Servidor Clinico Legado (Metasploitable2) - S5/S7/S8
+  # ----------------------------------------------------------------------------
+  metasploitable-hce:
+    image: tleemcjr/metasploitable2:latest
+    container_name: metasploitable-hce
+    hostname: srv-hce-legacy
+    tty: true
+    stdin_open: true
+    networks:
+      red_lan:
+        ipv4_address: 10.0.0.20
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # 5. ZONA LAN CLINICA (10.0.0.0/24): Estacion Medica Interna (Victima MITM S8 / Cliente S11)
+  # ----------------------------------------------------------------------------
+  cliente-medico-lan:
+    image: ubuntu:22.04
+    container_name: cliente-medico-lan
+    hostname: pc-medico-sanisidro
+    command: >
+      bash -c "apt-get update && apt-get install -y iproute2 iputils-ping curl net-tools && tail -f /dev/null"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      red_lan:
+        ipv4_address: 10.0.0.10
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # 6. AUDITOR PTES / ATACANTE (Kali Linux Rolling) - Semanas 3, 4, 5, 7, 8 y 12
+  # ----------------------------------------------------------------------------
+  kali-auditor:
+    image: kalilinux/kali-rolling:latest
+    container_name: kali-auditor
+    hostname: kali-auditor-upn
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ../:/workspace
+    command: tail -f /dev/null
+    networks:
+      red_wan:
+        ipv4_address: 203.0.113.50
+      red_dmz:
+        ipv4_address: 172.16.10.50
+      red_lan:
+        ipv4_address: 10.0.0.50
+    restart: unless-stopped
+
+networks:
+  red_wan:
+    name: RedWAN_Externa
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 203.0.113.0/24
+          gateway: 203.0.113.1
+
+  red_dmz:
+    name: RedDMZ_Clinica
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.10.0/24
+          gateway: 172.16.10.1
+
+  red_lan:
+    name: RedLAN_Clinica
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24
+          gateway: 10.0.0.1

@@ -1,0 +1,151 @@
+! ============================================================================
+! PROYECTO FINAL SEGURIDAD INFORMATICA - CLINICA LIMATAMBO (SEDE SAN ISIDRO)
+! Consolidado de Laboratorios Cisco IOS: Semanas 2, 3, 4, 5, 7 y 9
+! ============================================================================
+! Topologia recomendada en Packet Tracer (Router ISR 4331 o 2911):
+!   - G0/0/0 (o G0/0): Zona WAN  -> 200.100.50.1/24  (Hacia PC-Externa 200.100.50.10)
+!   - G0/0/1 (o G0/1): Zona LAN  -> 192.168.10.1/24  (Estaciones Medicas / HCE 192.168.10.10)
+!   - G0/0/2 (o G0/2): Zona DMZ  -> 172.16.20.1/24   (Servidor Portal Web Clinica 172.16.20.10)
+! ============================================================================
+
+enable
+configure terminal
+
+! --- [SEMANA 2 & 3] Identidad, Hardening de Contrasenas y Banner Legal ---
+hostname R1-PERIMETRAL-LIMATAMBO
+ip domain-name clinicalimatambo.pe
+security passwords min-length 10
+service password-encryption
+
+! Contrasena privilegiada con hash robusto (S2)
+enable secret Adm1nCl1n1c4#2026
+
+! Banner legal disuasorio (Ley N° 29733 - Proteccion de Datos Personales)
+banner motd #
+======================================================================
+ACCESO RESTRINGIDO - RED CLINICA LIMATAMBO (SISTEMA HCE / IMAGENOLOGIA)
+El acceso no autorizado esta prohibido y sera auditado conforme a la
+Ley N. 29733 de Proteccion de Datos Personales y normativas internas.
+======================================================================
+#
+
+! --- [SEMANA 4] Autenticacion Local AAA (7.2.5 Lab) ---
+aaa new-model
+username admin_sgsi secret S3cur3Cl1n1c#2026
+username soporte_ti secret S0p0rt3T1#2026
+aaa authentication login default local
+aaa authentication login SSH-LOGIN local
+
+! --- [SEMANA 3 & 4] Configuracion de SSH v2 y endurecimiento de Lineas ---
+crypto key generate rsa general-keys modulus 1024
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+login block-for 120 attempts 3 within 60
+
+line con 0
+ aaa authentication login default
+ exec-timeout 5 0
+ logging synchronous
+ exit
+
+line vty 0 4
+ aaa authentication login SSH-LOGIN
+ transport input ssh
+ exec-timeout 5 0
+ logging synchronous
+ exit
+
+! --- [SEMANA 9] Configuracion de Interfaces Perimetrales (WAN, LAN, DMZ) ---
+interface GigabitEthernet0/0/0
+ description *** ZONA WAN - ENLACE EXTERNO INTERNET ***
+ ip address 200.100.50.1 255.255.255.0
+ no ip redirects
+ no ip unreachables
+ no ip proxy-arp
+ no shutdown
+ exit
+
+interface GigabitEthernet0/0/1
+ description *** ZONA LAN INTERNA - RED MEDICA Y HCE ***
+ ip address 192.168.10.1 255.255.255.0
+ no ip redirects
+ no ip unreachables
+ no ip proxy-arp
+ no shutdown
+ exit
+
+interface GigabitEthernet0/0/2
+ description *** ZONA DMZ - SERVIDOR PORTAL WEB CLINICA ***
+ ip address 172.16.20.1 255.255.255.0
+ ip access-group 101 out
+ no ip redirects
+ no ip unreachables
+ no ip proxy-arp
+ no shutdown
+ exit
+
+! --- [SEMANA 2] OSPF con Interfaces Pasivas hacia LAN y DMZ ---
+router ospf 1
+ router-id 1.1.1.1
+ network 200.100.50.0 0.0.0.255 area 0
+ network 192.168.10.0 0.0.0.255 area 0
+ network 172.16.20.0 0.0.0.255 area 0
+ passive-interface GigabitEthernet0/0/1
+ passive-interface GigabitEthernet0/0/2
+ exit
+
+! --- [SEMANA 9] Control de Acceso Perimetral (ACL 101 Extendida) ---
+! 1. Permite a la LAN Medica (192.168.10.0/24) consultar el Portal Web en DMZ (172.16.20.10) por HTTP (80) y HTTPS (443)
+access-list 101 remark === PERMITIR LAN MEDICA HACIA PORTAL WEB EN DMZ ===
+access-list 101 permit tcp 192.168.10.0 0.0.0.255 host 172.16.20.10 eq 80
+access-list 101 permit tcp 192.168.10.0 0.0.0.255 host 172.16.20.10 eq 443
+! 2. Permite desde WAN acceso exclusivo HTTP/HTTPS al Portal Web en DMZ
+access-list 101 remark === PERMITIR ACCESO WEB PUBLICO A DMZ ===
+access-list 101 permit tcp any host 172.16.20.10 eq 80
+access-list 101 permit tcp any host 172.16.20.10 eq 443
+! 3. Permite respuestas ICMP (echo-reply) para diagnostico controlado desde LAN
+access-list 101 permit icmp 192.168.10.0 0.0.0.255 172.16.20.0 0.0.0.255 echo
+! 4. Bloqueo explicito con registro de cualquier intento de DMZ hacia LAN Interna
+access-list 101 remark === BLOQUEAR TRAFICO NO AUTORIZADO ===
+access-list 101 deny ip any any
+
+! ACL 102 para proteger la entrada desde la DMZ (Bloqueo estricto DMZ -> LAN)
+access-list 102 remark === AISLAMIENTO ESTRICTO: PROHIBIR DMZ HACIA LAN CLINICA ===
+access-list 102 permit tcp host 172.16.20.10 any established
+access-list 102 deny ip 172.16.20.0 0.0.0.255 192.168.10.0 0.0.0.255
+access-list 102 permit ip 172.16.20.0 0.0.0.255 any
+
+interface GigabitEthernet0/0/2
+ ip access-group 102 in
+ exit
+
+! --- [SEMANA 5] Roles Administrativos / Role-Based CLI (5.2.5 Lab) ---
+! Nota: Para crear vistas parser view primero debes entrar a "enable view" (root view)
+! Comandos para ejecutar manualmente en consola privilegiada:
+!   enable view
+!   configure terminal
+!   parser view admin1
+!    secret Admin1Pass#2026
+!    commands exec include all show
+!    commands exec include all configure
+!    exit
+!   parser view tech
+!    secret TechPass#2026
+!    commands exec include show version
+!    commands exec include show interfaces
+!    commands exec include show ip interface brief
+!    commands exec include show access-lists
+!    exit
+
+end
+write memory
+
+! ============================================================================
+! COMANDOS DE EVIDENCIA PARA CAPTURAS EN PACKET TRACER:
+!   show running-config
+!   show ip ssh
+!   show ip ospf interface
+!   show access-lists
+!   debug aaa authentication   (y probar login por SSH)
+! ============================================================================

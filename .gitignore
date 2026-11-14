@@ -1,0 +1,12 @@
+# Ignorar imagenes pesadas de maquinas virtuales
+*.ova
+*.vdi
+*.vmdk
+*.iso
+*.pcap
+
+# Archivos temporales de Office y OS
+~$*.docx
+~$*.pptx
+.DS_Store
+Thumbs.db
