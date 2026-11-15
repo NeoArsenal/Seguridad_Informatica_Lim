@@ -1,3 +1,17 @@
+# Ignorar carpetas de material de clases (S1 a S12) en el repositorio Git
+S1/
+S2/
+S3/
+S4/
+S5/
+S6/
+S7/
+S8/
+S9/
+S10/
+S11/
+S12/
+
 # Ignorar imagenes pesadas de maquinas virtuales
 *.ova
 *.vdi
